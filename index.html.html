@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>英雄對戰惡魔</title>
+  
+  <!-- 載入 Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- 載入 React 和 Babel -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    /* 自定義動畫 */
+    @keyframes spin-slow {
+      from { transform: translate(-50%, -50%) rotate(0deg); }
+      to { transform: translate(-50%, -50%) rotate(360deg); }
+    }
+    .animate-spin-slow {
+      animation: spin-slow 3s linear infinite;
+    }
+    @keyframes fade-in-up {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .animate-fade-in-up {
+      animation: fade-in-up 0.5s ease-out;
+    }
+    @keyframes bounce-in {
+      0% { transform: scale(0.3); opacity: 0; }
+      50% { transform: scale(1.05); opacity: 1; }
+      70% { transform: scale(0.9); }
+      100% { transform: scale(1); }
+    }
+    .animate-bounce-in {
+      animation: bounce-in 0.6s cubic-bezier(0.215, 0.610, 0.355, 1.000) both;
+    }
+    
+    /* 蝙蝠飛行動畫 - 確保路徑橫跨螢幕 */
+    @keyframes bat-fly-path {
+      0% { left: -100px; transform: translateY(0) scale(0.8); opacity: 0; }
+      10% { opacity: 1; }
+      50% { transform: translateY(40px) scale(1); }
+      90% { opacity: 1; }
+      100% { left: 100%; transform: translateY(-20px) scale(0.8); opacity: 0; }
+    }
+    .animate-bat {
+      position: absolute;
+      animation: bat-fly-path 8s linear infinite;
+    }
+
+    /* 錯誤訊息樣式 */
+    #error-display {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: #1e1e1e; color: #ff6b6b;
+      padding: 20px; z-index: 9999;
+      font-family: monospace;
+      white-space: pre-wrap;
+    }
+    
+    /* 受傷閃爍動畫 */
+    @keyframes shake-red {
+      0% { transform: translate(0, 0); filter: drop-shadow(0 0 0 red); }
+      25% { transform: translate(-5px, 0); filter: drop-shadow(0 0 10px red); }
+      50% { transform: translate(5px, 0); filter: drop-shadow(0 0 20px red); }
+      75% { transform: translate(-5px, 0); filter: drop-shadow(0 0 10px red); }
+      100% { transform: translate(0, 0); filter: drop-shadow(0 0 0 red); }
+    }
+    .hero-damage {
+      animation: shake-red 0.4s ease-in-out;
+    }
+
+    /* --- 新增：走路動畫 (模擬步伐) --- */
+    @keyframes walk-bounce {
+      0% { transform: translateY(0) rotate(0deg); }
+      25% { transform: translateY(-6px) rotate(-3deg); }
+      50% { transform: translateY(0) rotate(0deg); }
+      75% { transform: translateY(-6px) rotate(3deg); }
+      100% { transform: translateY(0) rotate(0deg); }
+    }
+    .animate-walk {
+      animation: walk-bounce 0.5s infinite linear;
+    }
+
+    /* --- 新增：惡魔/待機 懸浮動畫 --- */
+    @keyframes idle-float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-8px); }
+    }
+    .animate-idle {
+      animation: idle-float 2s infinite ease-in-out;
+    }
+  </style>
+</head>
+<body class="bg-slate-900">
+  <!-- 載入中提示 -->
+  <div id="loading" class="fixed inset-0 flex items-center justify-center text-white text-xl">
+    正在召喚英雄與惡魔...
+  </div>
+
+  <!-- 錯誤顯示區 -->
+  <div id="error-display"></div>
+
+  <!-- React 根目錄 -->
+  <div id="root"></div>
+
+  <!-- 全域錯誤攔截 -->
+  <script>
+    window.onerror = function(message, source, lineno, colno, error) {
+      const display = document.getElementById('error-display');
+      const loading = document.getElementById('loading');
+      if (display) {
+        loading.style.display = 'none';
+        display.style.display = 'block';
+        display.innerHTML = `<h1>⚠️ 遊戲發生錯誤</h1><p>${message}</p><p>Line: ${lineno}</p>`;
+      }
+    };
+  </script>
+
+  <script type="text/babel">
+    // 確保 React 已載入
+    if (typeof React === 'undefined' || typeof ReactDOM === 'undefined') {
+      throw new Error("React 載入失敗，請檢查網路連線。");
+    }
+
+    const { useState, useEffect, useRef, memo } = React;
+
+    // --- 內建圖示組件 (SVG) ---
+    const Heart = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>;
+    const Play = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polygon points="5 3 19 12 5 21 5 3"/></svg>;
+    const RefreshCw = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>;
+    const Shield = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>;
+    const Swords = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5"/><line x1="13" y1="19" x2="19" y2="13"/><line x1="16" y1="16" x2="20" y2="20"/><line x1="19" y1="21" x2="21" y2="19"/><polyline points="14.5 6.5 18 3 21 3 21 6 17.5 9.5"/><line x1="5" y1="14" x2="9" y2="18"/><line x1="7" y1="17" x2="4" y2="20"/><line x1="3" y1="19" x2="5" y2="21"/></svg>;
+    const Trophy = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>;
+    const Move = ({className}) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg>;
+    
+    // --- 蝙蝠圖示 (增強可見度) ---
+    const Bat = ({className, style}) => (
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50" width="60" height="30" className={className} style={style}>
+        {/* 蝙蝠身體：灰藍色填充，白色邊框確保可見 */}
+        <path d="M50 35 C 30 45, 10 30, 5 15 C 20 20, 30 25, 45 25 C 45 15, 40 5, 50 10 C 60 5, 55 15, 55 25 C 70 25, 80 20, 95 15 C 90 30, 70 45, 50 35 Z" 
+              fill="#4B5563" stroke="#E5E7EB" strokeWidth="2" />
+        {/* 紅色眼睛 */}
+        <circle cx="45" cy="22" r="2" fill="#EF4444" />
+        <circle cx="55" cy="22" r="2" fill="#EF4444" />
+      </svg>
+    );
+
+    // --- 圖片備援 (Fallback) ---
+    const HERO_FALLBACK = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='45' fill='%2360A5FA' stroke='%233B82F6' stroke-width='5'/%3E%3Ctext x='50' y='60' font-family='Arial' font-size='30' fill='white' text-anchor='middle' font-weight='bold'%3EHERO%3C/text%3E%3C/svg%3E";
+    const DEMON_FALLBACK = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='45' fill='%23EF4444' stroke='%23991B1B' stroke-width='5'/%3E%3Ctext x='50' y='60' font-family='Arial' font-size='24' fill='white' text-anchor='middle' font-weight='bold'%3EDEMON%3C/text%3E%3C/svg%3E";
+
+    // --- 獨立的圖片組件 ---
+    const CharacterImage = memo(({ src, fallbackSrc, alt, className, style }) => {
+      const [imgSrc, setImgSrc] = useState(src);
+      const handleError = () => {
+        if (imgSrc !== fallbackSrc) setImgSrc(fallbackSrc);
+      };
+      return (
+        <img src={imgSrc} alt={alt} className={className} style={style} onError={handleError} />
+      );
+    });
+
+    // --- 題目數據 ---
+    const QUESTION_DATA = [
+      { q: "I ______ (walk) home when it suddenly started to rain.", a: "was walking", options: ["was walking", "were walking", "walked"] },
+      { q: "She ______ (cook) dinner when her friend called.", a: "was cooking", options: ["was cooking", "were cooking", "cooked"] },
+      { q: "They ______ (play) basketball when the lights went out.", a: "were playing", options: ["were playing", "was playing", "played"] },
+      { q: "He ______ (study) when his mom came in.", a: "was studying", options: ["was studying", "were studying", "studies"] },
+      { q: "We ______ (watch) a movie when the power went off.", a: "were watching", options: ["were watching", "was watching", "watched"] },
+      { q: "She ______ (read) a book while he was cleaning the room.", a: "was reading", options: ["was reading", "were reading", "reads"] },
+      { q: "The children ______ (swim) while their parents were talking.", a: "were swimming", options: ["were swimming", "was swimming", "swam"] },
+      { q: "I ______ (try) to sleep when someone knocked on the door.", a: "was trying", options: ["was trying", "were trying", "tried"] },
+      { q: "He ______ (drive) to work when he saw an accident.", a: "was driving", options: ["was driving", "were driving", "drove"] },
+      { q: "They ______ (have) lunch while their teacher was preparing tests.", a: "were having", options: ["were having", "was having", "had"] },
+      { q: "Emma ______ (listen) to music when her phone died.", a: "was listening", options: ["was listening", "were listening", "listened"] },
+      { q: "My dog ______ (run) around the yard while I was watering the plants.", a: "was running", options: ["was running", "were running", "ran"] },
+      { q: "______ you ______ (finish) your homework yesterday?", a: "Did ... finish", options: ["Did ... finish", "Do ... finish", "Did ... finished"] },
+      { q: "What time ______ he ______ (arrive)?", a: "did ... arrive", options: ["did ... arrive", "does ... arrive", "did ... arrived"] },
+      { q: "______ they ______ (go) to the meeting last week?", a: "Did ... go", options: ["Did ... go", "Do ... go", "Did ... went"] },
+      { q: "Why ______ you ______ (call) me last night?", a: "did ... call", options: ["did ... call", "do ... call", "did ... called"] },
+      { q: "Where ______ she ______ (buy) that bag?", a: "did ... buy", options: ["did ... buy", "does ... buy", "did ... bought"] },
+      { q: "______ he ______ (see) the movie already?", a: "Did ... see", options: ["Did ... see", "Does ... see", "Did ... saw"] },
+      { q: "What ______ you ______ (eat) for dinner?", a: "did ... eat", options: ["did ... eat", "do ... eat", "did ... ate"] },
+      { q: "______ your brother ______ (help) you yesterday?", a: "Did ... help", options: ["Did ... help", "Do ... help", "Did ... helped"] },
+    ];
+
+    // --- 遊戲常數 ---
+    const HERO_MAX_HP = 100;
+    const DEMON_MAX_HP = 100;
+    const GAME_WIDTH = 800;
+    const GAME_HEIGHT = 300;
+    const DEMON_ATTACK_INTERVAL = 2000; 
+    
+    // **新增**: 英雄的固定 Y 軸位置 (模擬站在地上)
+    const HERO_GROUND_Y = 220; 
+
+    function HeroVsDemonGame() {
+      const [gameState, setGameState] = useState('start'); 
+      const [currentQIndex, setCurrentQIndex] = useState(0);
+      const [questions, setQuestions] = useState([]);
+      const [heroHP, setHeroHP] = useState(HERO_MAX_HP);
+      const [demonHP, setDemonHP] = useState(DEMON_MAX_HP);
+      const [projectiles, setProjectiles] = useState([]); 
+      const [feedback, setFeedback] = useState(null);
+      const [shuffledOptions, setShuffledOptions] = useState([]);
+
+      const [heroPos, setHeroPos] = useState({ x: 100, y: HERO_GROUND_Y });
+      const [demonPos, setDemonPos] = useState({ x: 700, y: 150 });
+      
+      // **新增**: 用於控制動畫與翻轉
+      const [isMoving, setIsMoving] = useState(false);
+      const [facingRight, setFacingRight] = useState(true);
+
+      const heroTarget = useRef({ x: 100, y: HERO_GROUND_Y });
+      const demonTarget = useRef({ x: 700, y: 150 });
+      const keysPressed = useRef({});
+      
+      const gameLoopRef = useRef();
+      const lastDemonAttackRef = useRef(0);
+      const lastBodyDamageRef = useRef(0); 
+
+      useEffect(() => {
+        const handleKeyDown = (e) => { 
+          if(e.key) {
+            keysPressed.current[e.key.toLowerCase()] = true; 
+            keysPressed.current[e.key] = true; 
+          }
+        };
+        const handleKeyUp = (e) => { 
+          if(e.key) {
+            keysPressed.current[e.key.toLowerCase()] = false; 
+            keysPressed.current[e.key] = false; 
+          }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
+        return () => {
+          window.removeEventListener('keydown', handleKeyDown);
+          window.removeEventListener('keyup', handleKeyUp);
+        };
+      }, []);
+
+      useEffect(() => {
+        if (gameState === 'playing' && questions.length > 0 && currentQIndex < questions.length) {
+          const currentQ = questions[currentQIndex];
+          const opts = [...currentQ.options].sort(() => Math.random() - 0.5);
+          setShuffledOptions(opts);
+        }
+      }, [currentQIndex, gameState, questions]);
+
+      const getRandomTarget = (role) => {
+        if (role === 'demon') {
+          return {
+            x: 450 + Math.random() * 300,
+            y: 50 + Math.random() * 200
+          };
+        }
+        return { x: 0, y: 0 };
+      };
+
+      const moveTowards = (current, target, speed) => {
+        const dx = target.x - current.x;
+        const dy = target.y - current.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < speed) return target;
+        return {
+          x: current.x + (dx / dist) * speed,
+          y: current.y + (dy / dist) * speed
+        };
+      };
+
+      useEffect(() => {
+        if (gameState !== 'playing') {
+          cancelAnimationFrame(gameLoopRef.current);
+          return;
+        }
+
+        const loop = (timestamp) => {
+          if (!lastDemonAttackRef.current) lastDemonAttackRef.current = timestamp;
+
+          // 1. 角色移動 (允許上下左右，但限制底部邊界)
+          let heroDx = 0;
+          let heroDy = 0;
+          const heroSpeed = 3.5;
+
+          // **恢復**: 上下左右移動邏輯
+          if (keysPressed.current['arrowup'] || keysPressed.current['w']) heroDy -= heroSpeed;
+          if (keysPressed.current['arrowdown'] || keysPressed.current['s']) heroDy += heroSpeed;
+          if (keysPressed.current['arrowleft'] || keysPressed.current['a']) heroDx -= heroSpeed;
+          if (keysPressed.current['arrowright'] || keysPressed.current['d']) heroDx += heroSpeed;
+
+          let nextHeroPos = { ...heroPos };
+          let currentlyMoving = false;
+          let newFacingRight = facingRight; // 暫存方向
+
+          // 處理移動 (滑鼠點擊移動也需要更新邏輯)
+          if (heroDx !== 0 || heroDy !== 0) {
+            currentlyMoving = true;
+            nextHeroPos.x += heroDx;
+            nextHeroPos.y += heroDy;
+            heroTarget.current = { ...nextHeroPos };
+
+            // 判斷按鍵方向
+            if (heroDx > 0) newFacingRight = true;
+            if (heroDx < 0) newFacingRight = false;
+          } else {
+            // 滑鼠點擊目標移動
+            const targetX = heroTarget.current.x;
+            const targetY = heroTarget.current.y;
+            
+            // 2D moveTowards
+            const dx = targetX - nextHeroPos.x;
+            const dy = targetY - nextHeroPos.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist > 0.5) { // 增加一點容錯，避免抖動
+                currentlyMoving = true;
+                if (dist < heroSpeed) {
+                nextHeroPos.x = targetX;
+                nextHeroPos.y = targetY;
+                } else {
+                nextHeroPos.x += (dx / dist) * heroSpeed;
+                nextHeroPos.y += (dy / dist) * heroSpeed;
+                }
+                
+                // 判斷滑鼠移動方向
+                if (dx > 0.5) newFacingRight = true;
+                if (dx < -0.5) newFacingRight = false;
+            }
+          }
+
+          // **狀態更新優化** (避免每一幀都重複 set state)
+          if (currentlyMoving !== isMoving) setIsMoving(currentlyMoving);
+          if (newFacingRight !== facingRight) setFacingRight(newFacingRight);
+
+          // **邊界限制**: 
+          nextHeroPos.x = Math.max(30, Math.min(GAME_WIDTH - 30, nextHeroPos.x));
+          nextHeroPos.y = Math.max(50, Math.min(HERO_GROUND_Y, nextHeroPos.y)); 
+
+          // 惡魔移動 (保持不變)
+          const dDist = Math.sqrt(Math.pow(demonTarget.current.x - demonPos.x, 2) + Math.pow(demonTarget.current.y - demonPos.y, 2));
+          if (dDist < 10) demonTarget.current = getRandomTarget('demon');
+          const nextDemonPos = moveTowards(demonPos, demonTarget.current, 2.5);
+
+          setHeroPos(nextHeroPos);
+          setDemonPos(nextDemonPos);
+
+          // **新增**: 英雄與惡魔的身體碰撞檢測
+          const distBody = Math.sqrt(Math.pow(nextHeroPos.x - nextDemonPos.x, 2) + Math.pow(nextHeroPos.y - nextDemonPos.y, 2));
+          if (distBody < 80) {
+            if (timestamp - lastBodyDamageRef.current > 1000) {
+              setHeroHP(prev => Math.max(0, prev - 15)); // 碰撞傷害
+              setFeedback('damage'); // 觸發視覺效果
+              setTimeout(() => setFeedback(null), 500);
+              lastBodyDamageRef.current = timestamp;
+            }
+          }
+
+          // 2. 惡魔攻擊 (含閃電)
+          if (timestamp - lastDemonAttackRef.current > DEMON_ATTACK_INTERVAL) {
+            const isLightning = Math.random() > 0.6; 
+            const variant = isLightning ? 'lightning' : 'normal';
+            
+            setProjectiles(prev => [
+              ...prev,
+              {
+                id: Date.now() + Math.random(),
+                type: 'demon',
+                variant,
+                x: nextDemonPos.x - 40,
+                y: nextDemonPos.y,
+                hit: false
+              }
+            ]);
+            lastDemonAttackRef.current = timestamp;
+          }
+
+          // 3. 投射物
+          setProjectiles(prev => {
+            const nextProjectiles = [];
+            prev.forEach(p => {
+              let newX = p.x;
+              let newY = p.y;
+              
+              if (p.type === 'hero') {
+                const dx = nextDemonPos.x - p.x;
+                const dy = nextDemonPos.y - p.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const speed = 15; 
+                if (dist > 0) {
+                  newX += (dx / dist) * speed;
+                  newY += (dy / dist) * speed;
+                }
+              } else {
+                // 惡魔攻擊
+                if (p.variant === 'lightning') {
+                  newX -= 12; 
+                } else {
+                  newX -= 8;  
+                }
+              }
+
+              if (newX < -50 || newX > GAME_WIDTH + 50) return;
+
+              let hit = false;
+              
+              // Hero Hit Demon
+              if (p.type === 'hero') {
+                const distToDemon = Math.sqrt(Math.pow(newX - nextDemonPos.x, 2) + Math.pow(newY - nextDemonPos.y, 2));
+                if (distToDemon < 50) {
+                  hit = true;
+                }
+              }
+
+              // Demon Hit Hero (Projectile)
+              if (p.type === 'demon' && !p.hit) {
+                const distToHero = Math.sqrt(Math.pow(newX - nextHeroPos.x, 2) + Math.pow(newY - nextHeroPos.y, 2));
+                if (distToHero < 40) { 
+                  setHeroHP(h => Math.max(0, h - 10));
+                  hit = true;
+                }
+              }
+
+              if (!hit) {
+                nextProjectiles.push({ ...p, x: newX, y: newY });
+              }
+            });
+            return nextProjectiles;
+          });
+
+          if (heroHP <= 0) setGameState('lost');
+
+          gameLoopRef.current = requestAnimationFrame(loop);
+        };
+
+        gameLoopRef.current = requestAnimationFrame(loop);
+        return () => cancelAnimationFrame(gameLoopRef.current);
+      }, [gameState, heroHP, heroPos, demonPos, isMoving, facingRight]); 
+
+      const startGame = () => {
+        const shuffledQ = [...QUESTION_DATA].sort(() => Math.random() - 0.5);
+        setQuestions(shuffledQ);
+        setGameState('playing');
+        setHeroHP(HERO_MAX_HP);
+        setDemonHP(DEMON_MAX_HP);
+        setCurrentQIndex(0);
+        setProjectiles([]);
+        setFeedback(null);
+        setHeroPos({ x: 100, y: HERO_GROUND_Y }); // 初始位置在底部
+        setDemonPos({ x: 700, y: 150 });
+        setIsMoving(false);
+        setFacingRight(true);
+        heroTarget.current = { x: 100, y: HERO_GROUND_Y };
+        demonTarget.current = { x: 700, y: 150 };
+        lastDemonAttackRef.current = 0;
+        lastBodyDamageRef.current = 0;
+      };
+
+      const spawnHeroProjectile = () => {
+        setProjectiles(prev => [
+          ...prev,
+          {
+            id: Date.now() + Math.random(),
+            type: 'hero',
+            variant: 'normal',
+            x: heroPos.x + 40,
+            y: heroPos.y,
+            hit: false
+          }
+        ]);
+      };
+
+      const handleAnswer = (selectedOption) => {
+        const currentQ = questions[currentQIndex];
+        if (selectedOption === currentQ.a) {
+          setFeedback('correct');
+          spawnHeroProjectile();
+          
+          const damage = DEMON_MAX_HP / QUESTION_DATA.length;
+          const newDemonHP = Math.max(0, demonHP - damage);
+          setDemonHP(newDemonHP);
+
+          setTimeout(() => {
+            if (currentQIndex + 1 >= questions.length) {
+              setGameState('won');
+            } else {
+              setCurrentQIndex(prev => prev + 1);
+              setFeedback(null);
+            }
+          }, 1000); 
+        } else {
+          setFeedback('wrong');
+          setHeroHP(prev => Math.max(0, prev - 5)); 
+          setTimeout(() => setFeedback(null), 800);
+        }
+      };
+
+      const handleBattleAreaClick = (e) => {
+        if (gameState !== 'playing') return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top; // 恢復取得 Y 座標
+        heroTarget.current = { x, y };
+      };
+
+      // --- UI ---
+      const renderStatus = () => (
+        <div className="flex justify-between items-center mb-4 w-full">
+          <div className="w-5/12">
+            <div className="flex items-center text-blue-400 font-bold mb-1">
+              <Shield className="w-5 h-5 mr-1" /> 英雄 HP: {heroHP}
+            </div>
+            <div className="w-full h-4 bg-gray-700 rounded-full overflow-hidden border border-gray-600">
+              <div 
+                className="h-full bg-gradient-to-r from-blue-600 to-blue-400 transition-all duration-300"
+                style={{ width: `${(heroHP / HERO_MAX_HP) * 100}%` }}
+              ></div>
+            </div>
+          </div>
+          <div className="text-white font-bold text-xl px-4">VS</div>
+          <div className="w-5/12 text-right">
+            <div className="flex items-center justify-end text-red-400 font-bold mb-1">
+              惡魔 HP: {Math.ceil(demonHP)} <Swords className="w-5 h-5 ml-1" />
+            </div>
+            <div className="w-full h-4 bg-gray-700 rounded-full overflow-hidden border border-gray-600">
+              <div 
+                className="h-full bg-gradient-to-l from-red-600 to-red-400 transition-all duration-300 ml-auto"
+                style={{ width: `${(demonHP / DEMON_MAX_HP) * 100}%` }}
+              ></div>
+            </div>
+          </div>
+        </div>
+      );
+
+      const renderBattleArea = () => (
+        <div className="w-full mb-4">
+          <div className="flex justify-between text-xs text-gray-400 px-2 mb-1">
+            <div className="flex items-center"><Move className="w-3 h-3 mr-1"/> 控制：WASD / 方向鍵移動</div>
+            <div>小心惡魔的衝撞與火球！</div>
+          </div>
+          
+          <div 
+            className="relative w-full h-[300px] rounded-lg overflow-hidden border-4 border-slate-700 shadow-2xl cursor-crosshair active:cursor-grabbing group bg-slate-900"
+            onClick={handleBattleAreaClick}
+          >
+            {/* 背景層 */}
+            <div className="absolute inset-0 w-full h-full overflow-hidden">
+                {/* 基礎深色漸層 */}
+                <div className="absolute inset-0 bg-gradient-to-b from-[#1a103c] via-[#2d1b4e] to-[#0f0518] z-0"></div>
+                
+                {/* 背景圖片 */}
+                <img 
+                  src="./background.png" 
+                  alt="Spooky Park Background" 
+                  className="absolute inset-0 w-full h-full object-cover filter brightness-75 contrast-110 grayscale-[20%] opacity-70 z-0"
+                  onError={(e) => { e.target.style.display = 'none'; }}
+                />
+
+                 {/* 裝飾性月亮 */}
+                 <div className="absolute top-6 right-16 w-16 h-16 bg-yellow-100 rounded-full shadow-[0_0_60px_rgba(253,224,71,0.4)] opacity-80 mix-blend-screen z-0">
+                    <div className="absolute top-3 left-3 w-3 h-3 bg-gray-200 rounded-full opacity-30"></div>
+                    <div className="absolute bottom-4 right-4 w-4 h-4 bg-gray-200 rounded-full opacity-30"></div>
+                  </div>
+
+                {/* 蝙蝠群 (Z-index 調整為 z-30 確保在最上層) */}
+                <Bat className="animate-bat z-30" style={{ top: '10%', animationDelay: '0s', animationDuration: '9s' }} />
+                <Bat className="animate-bat z-30" style={{ top: '25%', animationDelay: '2s', animationDuration: '11s' }} />
+                <Bat className="animate-bat z-30" style={{ top: '15%', animationDelay: '5s', animationDuration: '10s' }} />
+                <Bat className="animate-bat z-30" style={{ top: '30%', animationDelay: '3.5s', animationDuration: '12s' }} />
+
+                {/* 地面深色遮罩 */}
+                <div className="absolute bottom-0 w-full h-1/2 bg-gradient-to-t from-black via-black/80 to-transparent z-10"></div>
+
+                {/* 環境暗角 (Vignette) */}
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_30%,rgba(0,0,0,0.8)_100%)] pointer-events-none z-10"></div>
+            </div>
+
+            {/* 英雄 (加大版 w-48) - 增加受傷 class 與走路/翻轉邏輯 */}
+            <div 
+              className={`absolute flex flex-col items-center z-20 pointer-events-none transition-transform duration-75 ${feedback === 'damage' ? 'hero-damage' : ''}`}
+              style={{ 
+                left: heroPos.x, 
+                top: heroPos.y,
+                transform: `translate(-50%, -50%) scale(${feedback === 'wrong' ? 1.2 : 1})`
+              }}
+            >
+              <div className={`${feedback === 'wrong' || heroHP < 30 ? 'animate-pulse' : ''} ${feedback === 'damage' ? 'text-red-500' : ''}`}>
+                <div className="relative flex justify-center items-end h-48">
+                  {/* 角色陰影 */}
+                  <div className="absolute bottom-4 w-28 h-8 bg-black/60 blur-md rounded-[100%] transform scale-y-50 shadow-[0_0_15px_rgba(0,0,0,0.8)]"></div>
+                  
+                  {/* 角色圖片容器 - 負責走路搖晃與翻轉 */}
+                  <div className={`${isMoving ? 'animate-walk' : 'animate-idle'} transition-transform duration-150`}>
+                      <CharacterImage 
+                        src="./hero.png" 
+                        fallbackSrc={HERO_FALLBACK}
+                        alt="Hero"
+                        className={`relative w-48 h-48 object-contain drop-shadow-[0_0_10px_rgba(59,130,246,0.3)] brightness-90 contrast-110 ${feedback === 'damage' ? 'brightness-150 sepia-0 hue-rotate-[-50deg] saturate-200' : ''}`}
+                        style={{ transform: facingRight ? 'scaleX(1)' : 'scaleX(-1)' }}
+                      />
+                  </div>
+                </div>
+              </div>
+              <div className="mt-[-20px] relative z-20 bg-slate-900/90 backdrop-blur-sm px-2 py-0.5 rounded text-white text-[10px] font-bold border border-blue-500/50 text-center shadow-lg">YOU</div>
+            </div>
+
+            {/* 惡魔 (加大版 w-48) */}
+            <div 
+              className="absolute flex flex-col items-center z-20 pointer-events-none transition-transform duration-100 ease-linear"
+              style={{ 
+                left: demonPos.x, 
+                top: demonPos.y,
+                transform: `translate(-50%, -50%) scale(${feedback === 'correct' ? 0.9 : 1})`
+              }}
+            >
+              <div className={`${feedback === 'correct' ? 'opacity-80' : ''}`}>
+                <div className="relative flex justify-center items-end h-48">
+                   {/* 惡魔陰影 */}
+                   <div className="absolute bottom-4 w-28 h-8 bg-black/60 blur-md rounded-[100%] transform scale-y-50 shadow-[0_0_15px_rgba(0,0,0,0.8)]"></div>
+                   {/* 惡魔腳下的紅色微光 */}
+                   <div className="absolute bottom-6 w-32 h-10 bg-red-900/20 blur-xl rounded-full"></div>
+
+                  <div className="animate-idle">
+                    <CharacterImage 
+                        src="./devil.png" 
+                        fallbackSrc={DEMON_FALLBACK}
+                        alt="Demon"
+                        className="relative w-48 h-48 object-contain drop-shadow-[0_0_15px_rgba(239,68,68,0.2)] brightness-90 contrast-110"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="mt-[-20px] relative z-20 bg-slate-900/90 backdrop-blur-sm px-2 py-0.5 rounded text-white text-[10px] font-bold border border-red-500/50 text-center shadow-lg">DEMON</div>
+            </div>
+
+            {/* 投射物 */}
+            {projectiles.map(p => (
+              <div
+                key={p.id}
+                className="absolute flex items-center justify-center pointer-events-none z-30"
+                style={{ 
+                  left: p.x,
+                  top: p.y,
+                  transform: 'translate(-50%, -50%)'
+                }}
+              >
+                {p.type === 'hero' ? (
+                  // 英雄氣功 - 增加混合模式讓它看起來像發光
+                  <div className="relative mix-blend-screen">
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 bg-blue-600/30 rounded-full blur-xl"></div>
+                    <div className="relative w-8 h-8 bg-gradient-to-r from-cyan-400 to-blue-600 rounded-full shadow-[0_0_20px_5px_rgba(34,211,238,0.5)] border-2 border-white/80"></div>
+                  </div>
+                ) : (
+                  // 惡魔攻擊
+                  p.variant === 'lightning' ? (
+                    <div className="relative mix-blend-screen">
+                      <svg width="60" height="30" viewBox="0 0 60 30" className="filter drop-shadow-[0_0_10px_rgba(234,179,8,0.8)]">
+                        <path d="M60 10 L40 0 L45 12 L0 15 L20 30 L15 18 Z" fill="#FACC15" stroke="#FEF08A" strokeWidth="2" />
+                      </svg>
+                    </div>
+                  ) : (
+                    <div className="relative mix-blend-screen">
+                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 bg-red-600/30 rounded-full blur-xl"></div>
+                      <div className="relative w-8 h-8 bg-gradient-to-r from-orange-500 to-red-700 rounded-full shadow-[0_0_20px_5px_rgba(239,68,68,0.5)] border-2 border-orange-200/80"></div>
+                    </div>
+                  )
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+
+      const renderQuestion = () => {
+        if (questions.length === 0) return null;
+        const q = questions[currentQIndex];
+        const parts = q.q.split(/(\(.*?\))/);
+
+        return (
+          <div className="bg-slate-800 p-6 rounded-lg shadow-2xl border border-slate-600 w-full max-w-2xl text-white">
+            <div className="flex justify-between items-center mb-4 border-b border-slate-600 pb-2">
+              <span className="text-gray-400 font-semibold">題目 {currentQIndex + 1} / {questions.length}</span>
+              <span className="bg-blue-900 text-blue-200 text-xs px-2 py-1 rounded-full font-bold border border-blue-700">
+                {q.a.includes('Did') ? '一般過去式 (Simple Past)' : '過去進行式 (Past Continuous)'}
+              </span>
+            </div>
+            
+            <h2 className="text-xl md:text-2xl font-bold text-gray-100 mb-6 leading-relaxed">
+              {parts.map((part, index) => 
+                part.startsWith('(') ? <span key={index} className="text-blue-400 mx-1">{part}</span> : part
+              )}
+            </h2>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {shuffledOptions.map((opt, idx) => (
+                <button
+                  key={idx}
+                  disabled={feedback !== null}
+                  onClick={() => handleAnswer(opt)}
+                  className={`
+                    p-4 rounded-lg text-lg font-semibold transition-all transform hover:scale-105 active:scale-95
+                    ${feedback === null 
+                      ? 'bg-slate-700 hover:bg-slate-600 text-gray-200 border-2 border-slate-600 hover:border-blue-500' 
+                      : opt === q.a 
+                        ? 'bg-green-600 text-white border-green-500 shadow-lg scale-105' 
+                        : feedback === 'wrong' ? 'opacity-50' : 'bg-slate-700 text-gray-500'
+                    }
+                  `}
+                >
+                  {opt}
+                </button>
+              ))}
+            </div>
+            
+            {feedback === 'wrong' && (
+              <div className="mt-4 text-center text-red-400 font-bold animate-pulse">
+                哎呀！答錯了，英雄受到了反噬傷害！
+              </div>
+            )}
+            {feedback === 'damage' && (
+              <div className="mt-4 text-center text-red-500 font-bold animate-bounce">
+                警告！與惡魔發生碰撞！
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      return (
+        <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 font-sans text-slate-200">
+          <h1 className="text-3xl md:text-4xl font-extrabold text-white mb-6 drop-shadow-[0_0_15px_rgba(59,130,246,0.5)] tracking-wider">
+            <span className="text-blue-500">英雄</span> 對戰 <span className="text-red-600">惡魔</span> 
+            <span className="text-sm block md:inline md:ml-4 text-slate-400 font-normal">英文文法大考驗</span>
+          </h1>
+
+          {gameState === 'start' && (
+            <div className="bg-slate-800 p-8 rounded-xl shadow-2xl border border-slate-700 text-center max-w-md w-full animate-fade-in-up">
+              <div className="flex justify-center mb-6">
+                <Swords className="w-16 h-16 text-blue-500 drop-shadow-[0_0_10px_rgba(59,130,246,0.6)]" />
+              </div>
+              <h2 className="text-2xl font-bold mb-4 text-white">任務說明</h2>
+              <p className="text-gray-300 mb-6 leading-relaxed text-left">
+                1. <strong>答題攻擊</strong>：回答正確文法題來攻擊惡魔。<br/>
+                2. <strong>移動躲避</strong>：使用 <kbd className="bg-slate-600 text-white px-1 rounded border border-slate-500">WASD</kbd> 或 <kbd className="bg-slate-600 text-white px-1 rounded border border-slate-500">方向鍵</kbd> 移動。<br/>
+                3. <strong>小心碰撞</strong>：英雄只能在地面以上移動，被火球擊中或<span className="text-red-400">碰到惡魔</span>都會受傷！<br/>
+                4. <strong>勝利條件</strong>：完成所有 20 題並存活。
+              </p>
+              <button 
+                onClick={startGame}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg text-lg shadow-[0_0_20px_rgba(37,99,235,0.4)] transition-transform transform hover:scale-105 flex items-center justify-center border border-blue-500"
+              >
+                <Play className="w-5 h-5 mr-2" /> 開始戰鬥
+              </button>
+            </div>
+          )}
+
+          {gameState === 'playing' && (
+            <div className="w-full max-w-4xl flex flex-col items-center">
+              {renderStatus()}
+              {renderBattleArea()}
+              {renderQuestion()}
+            </div>
+          )}
+
+          {gameState === 'won' && (
+            <div className="bg-slate-800 p-8 rounded-xl shadow-2xl border border-yellow-600/30 text-center max-w-md w-full animate-bounce-in">
+              <div className="flex justify-center mb-6">
+                <Trophy className="w-20 h-20 text-yellow-500 drop-shadow-[0_0_15px_rgba(234,179,8,0.5)]" />
+              </div>
+              <h2 className="text-3xl font-bold mb-2 text-white">勝利！</h2>
+              <p className="text-gray-300 mb-6">你的英語能力和反應速度都超群！</p>
+              <button 
+                onClick={startGame}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg flex items-center justify-center"
+              >
+                <RefreshCw className="w-5 h-5 mr-2" /> 再玩一次
+              </button>
+            </div>
+          )}
+
+          {gameState === 'lost' && (
+            <div className="bg-slate-800 p-8 rounded-xl shadow-2xl border border-red-900/50 text-center max-w-md w-full">
+              <div className="flex justify-center mb-6">
+                <Heart className="w-16 h-16 text-gray-500" />
+              </div>
+              <h2 className="text-3xl font-bold mb-2 text-white">失敗...</h2>
+              <p className="text-gray-400 mb-6">受傷過重，請小心躲避惡魔的攻擊與衝撞！</p>
+              <button 
+                onClick={startGame}
+                className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg shadow-[0_0_15px_rgba(220,38,38,0.4)] flex items-center justify-center border border-red-500"
+              >
+                <RefreshCw className="w-5 h-5 mr-2" /> 重新挑戰
+              </button>
+            </div>
+          )}
+          
+          <div className="mt-8 text-slate-500 text-xs text-center">
+            練習重點：過去進行式 (Past Continuous) & 一般過去式 (Simple Past)
+          </div>
+        </div>
+      );
+    }
+
+    // 等待頁面載入完成再掛載 React (避免白畫面)
+    window.addEventListener('load', () => {
+      const loadingEl = document.getElementById('loading');
+      try {
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<HeroVsDemonGame />);
+        if (loadingEl) loadingEl.style.display = 'none';
+      } catch (err) {
+        if (loadingEl) loadingEl.innerText = "初始化失敗: " + err.message;
+        console.error(err);
+      }
+    });
+  </script>
+</body>
+</html>
